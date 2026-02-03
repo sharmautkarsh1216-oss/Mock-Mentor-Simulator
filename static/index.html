@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lenny's Podcast Mentor Simulator</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // API configuration - this connects to the Flask backend
+        const API_BASE = window.location.origin;
+
+        function MentorSimulatorApp() {
+            const [mentors, setMentors] = useState([]);
+            const [selectedMentor, setSelectedMentor] = useState(null);
+            const [mode, setMode] = useState('list');
+            const [messages, setMessages] = useState([]);
+            const [inputMessage, setInputMessage] = useState('');
+            const [interviewQuestion, setInterviewQuestion] = useState('');
+            const [userAnswer, setUserAnswer] = useState('');
+            const [loading, setLoading] = useState(false);
+            const [searchQuery, setSearchQuery] = useState('');
+            const [error, setError] = useState(null);
+
+            useEffect(() => {
+                loadMentors();
+            }, []);
+
+            const loadMentors = async () => {
+                try {
+                    const response = await fetch(`${API_BASE}/api/mentors`);
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        setMentors(data.mentors);
+                    } else {
+                        setError('Failed to load mentors');
+                    }
+                } catch (err) {
+                    console.error('Error loading mentors:', err);
+                    setError('Could not connect to server. Make sure the backend is running.');
+                }
+            };
+
+            const startInterview = async () => {
+                setLoading(true);
+                setError(null);
+                
+                try {
+                    const response = await fetch(`${API_BASE}/api/interview/start`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            mentor_name: selectedMentor.name,
+                            question_type: 'product_sense'
+                        })
+                    });
+
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        setInterviewQuestion(data.question);
+                        setMode('interview');
+                    } else {
+                        setError(data.error || 'Failed to start interview');
+                    }
+                } catch (err) {
+                    console.error('Error starting interview:', err);
+                    setError('Network error. Please try again.');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const submitAnswer = async () => {
+                if (!userAnswer.trim()) return;
+                
+                setLoading(true);
+                setError(null);
+                
+                try {
+                    const response = await fetch(`${API_BASE}/api/interview/feedback`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            mentor_name: selectedMentor.name,
+                            question: interviewQuestion,
+                            answer: userAnswer
+                        })
+                    });
+
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        setMessages([
+                            { role: 'user', content: userAnswer },
+                            { role: 'assistant', content: data.feedback }
+                        ]);
+                        setUserAnswer('');
+                    } else {
+                        setError(data.error || 'Failed to get feedback');
+                    }
+                } catch (err) {
+                    console.error('Error getting feedback:', err);
+                    setError('Network error. Please try again.');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const sendMessage = async () => {
+                if (!inputMessage.trim()) return;
+                
+                const userMsg = inputMessage;
+                setInputMessage('');
+                setMessages(prev => [...prev, { role: 'user', content: userMsg }]);
+                setLoading(true);
+                setError(null);
+                
+                try {
+                    const response = await fetch(`${API_BASE}/api/simulate`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            mentor_name: selectedMentor.name,
+                            message: userMsg,
+                            context: 'advice'
+                        })
+                    });
+
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        setMessages(prev => [...prev, 
+                            { role: 'assistant', content: data.response }
+                        ]);
+                    } else {
+                        setError(data.error || 'Failed to get response');
+                    }
+                } catch (err) {
+                    console.error('Error sending message:', err);
+                    setError('Network error. Please try again.');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const filteredMentors = mentors.filter(m =>
+                m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                m.role.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                m.company.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                (m.expertise || []).some(e => 
+                    e.toLowerCase().includes(searchQuery.toLowerCase())
+                )
+            );
+
+            const ErrorAlert = () => error ? (
+                <div className="max-w-4xl mx-auto mb-6 bg-red-50 border-l-4 border-red-500 p-4 rounded">
+                    <div className="flex items-center">
+                        <span className="text-red-500 text-xl mr-3">⚠️</span>
+                        <p className="text-red-700">{error}</p>
+                        <button 
+                            onClick={() => setError(null)}
+                            className="ml-auto text-red-500 hover:text-red-700"
+                        >
+                            ✕
+                        </button>
+                    </div>
+                </div>
+            ) : null;
+
+            if (mode === 'list') {
+                return (
+                    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50">
+                        <div className="max-w-7xl mx-auto px-4 py-12">
+                            <div className="text-center mb-16">
+                                <h1 className="text-6xl font-bold text-gray-900 mb-4 bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-purple-600">
+                                    🎓 Lenny's Podcast Mentors
+                                </h1>
+                                <p className="text-2xl text-gray-600 mb-2">
+                                    Practice PM interviews with 300+ expert mentors
+                                </p>
+                                <p className="text-lg text-gray-500">
+                                    Get authentic feedback in their characteristic styles
+                                </p>
+                            </div>
+
+                            <ErrorAlert />
+
+                            <div className="mb-12">
+                                <div className="relative max-w-2xl mx-auto">
+                                    <input
+                                        type="text"
+                                        placeholder="Search by name, role, company, or expertise..."
+                                        className="w-full px-6 py-5 rounded-2xl border-2 border-gray-200 focus:border-indigo-500 focus:outline-none text-lg shadow-sm"
+                                        value={searchQuery}
+                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                    />
+                                    <div className="absolute right-6 top-1/2 transform -translate-y-1/2 text-gray-400">
+                                        🔍
+                                    </div>
+                                </div>
+                                <p className="text-center text-gray-500 mt-4">
+                                    {filteredMentors.length} mentors available
+                                </p>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                {filteredMentors.map((mentor, idx) => (
+                                    <div
+                                        key={idx}
+                                        className="bg-white rounded-2xl shadow-md hover:shadow-2xl transition-all duration-300 p-6 cursor-pointer border border-gray-100 hover:border-indigo-200 transform hover:-translate-y-1"
+                                        onClick={() => {
+                                            setSelectedMentor(mentor);
+                                            setMessages([]);
+                                            setMode('select');
+                                        }}
+                                    >
+                                        <div className="flex items-start justify-between mb-4">
+                                            <div className="flex-1">
+                                                <h3 className="text-xl font-bold text-gray-900 mb-1">
+                                                    {mentor.name}
+                                                </h3>
+                                                <p className="text-indigo-600 font-semibold text-sm">
+                                                    {mentor.role}
+                                                </p>
+                                                <p className="text-gray-500 text-sm">
+                                                    @ {mentor.company}
+                                                </p>
+                                            </div>
+                                            <div className="text-3xl">👤</div>
+                                        </div>
+                                        
+                                        <div className="mb-4">
+                                            <p className="text-xs text-gray-500 mb-2">Communication Style</p>
+                                            <p className="text-sm text-gray-700">
+                                                {mentor.communication_style || 'Professional and engaging'}
+                                            </p>
+                                        </div>
+                                        
+                                        <div className="flex flex-wrap gap-2">
+                                            {(mentor.expertise || []).map((exp, i) => (
+                                                <span
+                                                    key={i}
+                                                    className="px-3 py-1 bg-indigo-50 text-indigo-700 rounded-full text-xs font-medium"
+                                                >
+                                                    {exp}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {filteredMentors.length === 0 && (
+                                <div className="text-center py-20">
+                                    <div className="text-6xl mb-4">🔍</div>
+                                    <p className="text-2xl text-gray-600 mb-2">
+                                        No mentors found
+                                    </p>
+                                    <p className="text-gray-500">
+                                        Try adjusting your search query
+                                    </p>
+                                </div>
+                            )}
+
+                            <div className="text-center mt-16 text-gray-500">
+                                <p className="mb-2">Built with Lenny's Podcast transcripts</p>
+                                <p className="text-sm">Practice • Learn • Grow</p>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            if (mode === 'select') {
+                return (
+                    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50 p-8">
+                        <div className="max-w-5xl mx-auto">
+                            <button
+                                onClick={() => {
+                                    setMode('list');
+                                    setSelectedMentor(null);
+                                }}
+                                className="mb-8 text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-2"
+                            >
+                                ← Back to mentors
+                            </button>
+
+                            <ErrorAlert />
+
+                            <div className="bg-white rounded-2xl shadow-xl p-10 mb-8 border border-gray-100">
+                                <div className="flex items-start gap-6 mb-8">
+                                    <div className="text-6xl">👤</div>
+                                    <div className="flex-1">
+                                        <h2 className="text-4xl font-bold text-gray-900 mb-2">
+                                            {selectedMentor.name}
+                                        </h2>
+                                        <p className="text-2xl text-indigo-600 mb-1">
+                                            {selectedMentor.role}
+                                        </p>
+                                        <p className="text-xl text-gray-500">
+                                            @ {selectedMentor.company}
+                                        </p>
+                                    </div>
+                                </div>
+                                
+                                <div className="grid md:grid-cols-2 gap-8">
+                                    <div>
+                                        <h3 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                                            <span className="text-xl">🎯</span> Expertise
+                                        </h3>
+                                        <div className="flex flex-wrap gap-2">
+                                            {(selectedMentor.expertise || []).map((exp, i) => (
+                                                <span
+                                                    key={i}
+                                                    className="px-4 py-2 bg-indigo-100 text-indigo-700 rounded-full font-medium"
+                                                >
+                                                    {exp}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <h3 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                                            <span className="text-xl">💬</span> Communication Style
+                                        </h3>
+                                        <p className="text-gray-700 bg-gray-50 p-4 rounded-lg">
+                                            {selectedMentor.communication_style || 'Professional and engaging'}
+                                        </p>
+                                        <div className="mt-3 flex items-center gap-4">
+                                            <div className="text-sm text-gray-600">
+                                                Formality: {selectedMentor.formality || 5}/10
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="grid md:grid-cols-2 gap-6">
+                                <button
+                                    onClick={startInterview}
+                                    disabled={loading}
+                                    className="bg-gradient-to-br from-indigo-600 to-purple-600 text-white rounded-2xl p-10 hover:from-indigo-700 hover:to-purple-700 transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
+                                >
+                                    <div className="text-5xl mb-4">🎯</div>
+                                    <h3 className="text-3xl font-bold mb-3">
+                                        PM Interview
+                                    </h3>
+                                    <p className="text-indigo-100 text-lg">
+                                        Practice with real interview questions and get authentic feedback in their style
+                                    </p>
+                                </button>
+
+                                <button
+                                    onClick={() => setMode('chat')}
+                                    className="bg-gradient-to-br from-green-600 to-teal-600 text-white rounded-2xl p-10 hover:from-green-700 hover:to-teal-700 transition-all duration-300 transform hover:scale-105 shadow-lg"
+                                >
+                                    <div className="text-5xl mb-4">💬</div>
+                                    <h3 className="text-3xl font-bold mb-3">
+                                        Ask for Advice
+                                    </h3>
+                                    <p className="text-green-100 text-lg">
+                                        Have a conversation and get guidance in their authentic voice
+                                    </p>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            if (mode === 'interview') {
+                return (
+                    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50 p-8">
+                        <div className="max-w-4xl mx-auto">
+                            <button
+                                onClick={() => setMode('select')}
+                                className="mb-8 text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-2"
+                            >
+                                ← Back
+                            </button>
+
+                            <ErrorAlert />
+
+                            <div className="bg-white rounded-2xl shadow-xl p-10 mb-6">
+                                <div className="flex items-center gap-4 mb-8">
+                                    <div className="text-4xl">🎯</div>
+                                    <div>
+                                        <h2 className="text-3xl font-bold text-gray-900">
+                                            PM Interview
+                                        </h2>
+                                        <p className="text-xl text-indigo-600">
+                                            with {selectedMentor.name}
+                                        </p>
+                                    </div>
+                                </div>
+
+                                {interviewQuestion && (
+                                    <div className="bg-indigo-50 border-l-4 border-indigo-500 p-6 mb-8 rounded-r-lg">
+                                        <h3 className="font-semibold text-indigo-900 mb-3 text-lg">
+                                            Interview Question:
+                                        </h3>
+                                        <p className="text-gray-800 whitespace-pre-wrap leading-relaxed">
+                                            {interviewQuestion}
+                                        </p>
+                                    </div>
+                                )}
+
+                                <div className="mb-6">
+                                    <label className="block text-gray-700 font-semibold mb-3 text-lg">
+                                        Your Answer:
+                                    </label>
+                                    <textarea
+                                        className="w-full h-64 px-5 py-4 border-2 border-gray-200 rounded-xl focus:border-indigo-500 focus:outline-none text-lg resize-none"
+                                        placeholder="Take your time to think through your response. Structure your answer clearly and provide specific examples..."
+                                        value={userAnswer}
+                                        onChange={(e) => setUserAnswer(e.target.value)}
+                                    />
+                                    <p className="text-sm text-gray-500 mt-2">
+                                        {userAnswer.length} characters
+                                    </p>
+                                </div>
+
+                                <button
+                                    onClick={submitAnswer}
+                                    disabled={loading || !userAnswer.trim()}
+                                    className="w-full bg-indigo-600 text-white py-5 rounded-xl font-semibold text-lg hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors shadow-lg"
+                                >
+                                    {loading ? '✨ Getting Feedback...' : '📤 Submit Answer for Feedback'}
+                                </button>
+                            </div>
+
+                            {messages.length > 0 && (
+                                <div className="bg-white rounded-2xl shadow-xl p-10">
+                                    <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center gap-3">
+                                        <span className="text-3xl">💡</span>
+                                        Feedback from {selectedMentor.name}
+                                    </h3>
+                                    {messages.map((msg, idx) => (
+                                        msg.role === 'assistant' && (
+                                            <div key={idx} className="bg-green-50 border-l-4 border-green-500 p-6 rounded-r-lg">
+                                                <div className="prose prose-lg max-w-none">
+                                                    <p className="text-gray-800 whitespace-pre-wrap leading-relaxed">
+                                                        {msg.content}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        )
+                                    ))}
+                                    
+                                    <button
+                                        onClick={() => {
+                                            setMessages([]);
+                                            setUserAnswer('');
+                                            setInterviewQuestion('');
+                                            setMode('select');
+                                        }}
+                                        className="mt-6 px-6 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium"
+                                    >
+                                        ← Try Another Question
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                );
+            }
+
+            if (mode === 'chat') {
+                return (
+                    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50 p-8">
+                        <div className="max-w-4xl mx-auto">
+                            <button
+                                onClick={() => setMode('select')}
+                                className="mb-8 text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-2"
+                            >
+                                ← Back
+                            </button>
+
+                            <ErrorAlert />
+
+                            <div className="bg-white rounded-2xl shadow-xl overflow-hidden">
+                                <div className="bg-gradient-to-r from-indigo-600 to-purple-600 p-6 text-white">
+                                    <div className="flex items-center gap-4">
+                                        <div className="text-4xl">💬</div>
+                                        <div>
+                                            <h2 className="text-2xl font-bold">
+                                                Chat with {selectedMentor.name}
+                                            </h2>
+                                            <p className="text-indigo-100">
+                                                {selectedMentor.role} @ {selectedMentor.company}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="h-[500px] overflow-y-auto p-8 space-y-6 bg-gray-50">
+                                    {messages.length === 0 && (
+                                        <div className="text-center py-20 text-gray-400">
+                                            <div className="text-6xl mb-4">👋</div>
+                                            <p className="text-xl">
+                                                Ask {selectedMentor.name} anything!
+                                            </p>
+                                            <p className="text-sm mt-2">
+                                                Get advice in their authentic style
+                                            </p>
+                                        </div>
+                                    )}
+                                    
+                                    {messages.map((msg, idx) => (
+                                        <div
+                                            key={idx}
+                                            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                                        >
+                                            <div
+                                                className={`max-w-[80%] p-5 rounded-2xl ${
+                                                    msg.role === 'user'
+                                                        ? 'bg-indigo-600 text-white rounded-br-none'
+                                                        : 'bg-white text-gray-800 shadow-md rounded-bl-none'
+                                                }`}
+                                            >
+                                                <p className="font-semibold mb-2 text-sm opacity-75">
+                                                    {msg.role === 'user' ? 'You' : selectedMentor.name}
+                                                </p>
+                                                <p className="whitespace-pre-wrap leading-relaxed">
+                                                    {msg.content}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    
+                                    {loading && (
+                                        <div className="flex justify-start">
+                                            <div className="bg-white p-5 rounded-2xl shadow-md rounded-bl-none">
+                                                <p className="text-gray-500">
+                                                    {selectedMentor.name} is thinking...
+                                                </p>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="p-6 bg-white border-t border-gray-200">
+                                    <div className="flex gap-4">
+                                        <input
+                                            type="text"
+                                            className="flex-1 px-5 py-4 border-2 border-gray-200 rounded-xl focus:border-indigo-500 focus:outline-none text-lg"
+                                            placeholder="Ask for advice, insights, or guidance..."
+                                            value={inputMessage}
+                                            onChange={(e) => setInputMessage(e.target.value)}
+                                            onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
+                                        />
+                                        <button
+                                            onClick={sendMessage}
+                                            disabled={loading || !inputMessage.trim()}
+                                            className="px-8 py-4 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors shadow-lg"
+                                        >
+                                            Send
+                                        </button>
+                                    </div>
+                                    <p className="text-xs text-gray-500 mt-2">
+                                        Press Enter to send • Responses in {selectedMentor.name}'s authentic style
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+        }
+
+        ReactDOM.render(<MentorSimulatorApp />, document.getElementById('root'));
+    </script>
+</body>
+</html>
